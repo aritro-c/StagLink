@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# Path to your HPC submit script
+SUBMIT="/scratch/bt123456/my_job/submit.sh"
+
+# Submit the first job and capture its job ID (parsable mode)
+jid=$(sbatch --parsable "$SUBMIT")
+echo "Submitted job 1: $jid"
+
+# Submit 4 more jobs chained sequentially
+for i in 2 3 4; do
+  jid=$(sbatch --parsable --dependency=afterany:$jid "$SUBMIT")
+  echo "Submitted job $i: $jid"
+done
