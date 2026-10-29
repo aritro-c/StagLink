@@ -10,18 +10,18 @@ NC='\033[0m' # No Color
 
 # --- CONFIGURATION TOGGLES ---
 DRY_RUN=false        # Set to true to simulate without changing files
-RUN_MIRROR=false      # Set to true to run mirror backup, false to skip
+RUN_MIRROR=true      # Set to true to run mirror backup, false to skip
 SHUTDOWN_AFTER=false # Set to true to shut down PC when finished
 DELETE_OLD_TRACERS=true # Set to true to delete older tracers before backup
-TRACERS_TO_KEEP=40       # Number of final tracers to keep
-DELETE_OLD_OUTPUTS=false # Set to true to delete ALL old output files (excluding tracers, .dat, .h5, .bin) AFTER backup
+TRACERS_TO_KEEP=60       # Number of final tracers to keep
+DELETE_OLD_OUTPUTS=true # Set to true to delete ALL old output files (excluding tracers, .dat, .h5, .bin) AFTER backup
 OUTPUTS_TO_KEEP=50       # Number of final timesteps to keep for all output files
 
 # --- PATHS ---
-SERVER="bt732647@lipwig.hpc.uni-bayreuth.de:/scratch/bt732647/hdf/"
-ARCHIVE="/home/aritro/Documents/Academia/PhD/StagYY/scripts/backup/archive/"
-MIRROR="/home/aritro/Documents/Academia/PhD/StagYY/scripts/backup/mirror"
-SSH_KEY="/home/aritro/.ssh/lipwig_key"
+SERVER="achattopadhy@euler.ethz.ch:/cluster/scratch/achattopadhy/i3D_03/"
+ARCHIVE="/run/media/aritro/f522493b-003a-404d-a839-3e0925c674b6/Aritro/StagYY/archive_runs/euler/i3D_03/archive/"
+MIRROR="/run/media/aritro/f522493b-003a-404d-a839-3e0925c674b6/Aritro/StagYY/archive_runs/euler/i3D_03/mirror/"
+SSH_KEY="/home/aritro/.ssh/euler_key"
 
 # --- LOGGING SETUP ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -92,7 +92,7 @@ if [ "$DELETE_OLD_OUTPUTS" = true ]; then
     ALL_OUTPUTS=$(ssh -i "$SSH_KEY" "$SERVER_HOST" "find \"${SERVER_PATH}+op\" -maxdepth 1 -type f -name '*[0-9][0-9][0-9][0-9][0-9]' ! -name '*tra[0-9]*' ! -name '*.dat' ! -name '*.h5' ! -name '*.bin'" 2>/dev/null)
     SSH_STATUS=$?
     set -e
-    
+
     if [ $SSH_STATUS -ne 0 ]; then
          log_error "SSH check failed. Output deletion will be skipped."
          prompt_continue_backup "Output deletion was hindered."
@@ -108,16 +108,16 @@ if [ "$DELETE_OLD_OUTPUTS" = true ]; then
              STEPS_TO_DELETE=$(echo "$UNIQUE_STEPS" | head -n "$NUM_STEPS_TO_DELETE" || true)
              STEPS_PATTERN=$(echo "$STEPS_TO_DELETE" | paste -sd '|')
              OUTPUTS_FILES_TO_DELETE=$(echo "$ALL_OUTPUTS" | grep -E "(${STEPS_PATTERN})$" || true)
-             
+
              if [ -n "$OUTPUTS_FILES_TO_DELETE" ]; then
                  NUM_FILES_TO_DELETE=$(echo "$OUTPUTS_FILES_TO_DELETE" | wc -l)
                  OLDEST_STEP=$(echo "$UNIQUE_STEPS" | head -n 1 || true)
                  NEWEST_DELETE_STEP=$(echo "$STEPS_TO_DELETE" | tail -n 1)
-                 
+
                  STEPS_TO_KEEP=$(echo "$UNIQUE_STEPS" | tail -n "$OUTPUTS_TO_KEEP")
                  OLDEST_KEPT_STEP=$(echo "$STEPS_TO_KEEP" | head -n 1 || true)
                  NEWEST_KEPT_STEP=$(echo "$STEPS_TO_KEEP" | tail -n 1)
-                 
+
                  echo -e "${YELLOW}======================================================${NC}"
                  echo -e "${YELLOW}PRE-FLIGHT WARNING: Output Deletion on SERVER Scheduled${NC}"
                  echo -e "Total unique timesteps found on SERVER: $NUM_STEPS"
@@ -125,7 +125,7 @@ if [ "$DELETE_OLD_OUTPUTS" = true ]; then
                  echo -e "This will permanently delete exactly $NUM_FILES_TO_DELETE older output files from the SERVER (timesteps $OLDEST_STEP to $NEWEST_DELETE_STEP)."
                  echo -e "Note: This deletion will execute ONLY AFTER the backup completes successfully."
                  echo -e "${YELLOW}======================================================${NC}"
-                 
+
                  if [ "$DRY_RUN" = true ]; then
                      : # Auto-authorized; proceed silently.
                  else
@@ -159,6 +159,9 @@ exec > >(tee -i >(cat >&3))
 # Redirect standard error ONLY to the log file (hides messy SSH/system warnings from terminal)
 exec 2>&3
 
+# Trap Ctrl+C to prevent partial operations (e.g., deletion without completed backup)
+trap 'echo ""; log_error "Backup ABORTED by user (Ctrl+C) at $(date)."; exit 130' INT
+
 echo -e "${BOLD_BLUE}Starting Backup Process...${NC}"
 echo -e "Log file: $LOG_FILE\n"
 
@@ -185,12 +188,12 @@ if [ "$DELETE_OLD_TRACERS" = true ]; then
         echo -e "${YELLOW}======================================================${NC}"
         TRACERS_TO_KEEP=$MIN_TRACERS_TO_KEEP
     fi
-    
+
     set +e
     TRACER_FILES=$(ssh -i "$SSH_KEY" "$SERVER_HOST" "find \"${SERVER_PATH}+op\" -maxdepth 1 -type f -name '*tra[0-9]*' | sort" 2>/dev/null)
     SSH_STATUS=$?
     set -e
-    
+
     if [ $SSH_STATUS -ne 0 ]; then
         log_error "SSH connection or directory check failed. Skipping tracer deletion."
         prompt_continue_backup "Tracer deletion was hindered."
@@ -208,14 +211,14 @@ if [ "$DELETE_OLD_TRACERS" = true ]; then
         else
             NUM_TO_DELETE=$((NUM_TRACERS - TRACERS_TO_KEEP))
             FILES_TO_DELETE=$(echo "$TRACER_FILES" | head -n "$NUM_TO_DELETE" || true)
-            
+
             OLDEST_DELETE_TRACER=$(echo "$FILES_TO_DELETE" | head -n 1 | sed -E 's/.*([0-9]{5})$/\1/' || true)
             NEWEST_DELETE_TRACER=$(echo "$FILES_TO_DELETE" | tail -n 1 | sed -E 's/.*([0-9]{5})$/\1/')
-            
+
             FILES_TO_KEEP=$(echo "$TRACER_FILES" | tail -n "$TRACERS_TO_KEEP")
             OLDEST_KEPT_TRACER=$(echo "$FILES_TO_KEEP" | head -n 1 | sed -E 's/.*([0-9]{5})$/\1/' || true)
             NEWEST_KEPT_TRACER=$(echo "$FILES_TO_KEEP" | tail -n 1 | sed -E 's/.*([0-9]{5})$/\1/')
-            
+
             echo -e "${YELLOW}======================================================${NC}"
             echo -e "${YELLOW}WARNING: Tracer Deletion on SERVER Scheduled${NC}"
             echo -e "Total physical tracer files found on SERVER: $NUM_TRACERS"
@@ -224,7 +227,7 @@ if [ "$DELETE_OLD_TRACERS" = true ]; then
             echo -e "Note: This preserves exactly $TRACERS_TO_KEEP most recent files, regardless of numbering gaps."
             echo -e "${RED}Risk: If the latest tracers are corrupted, you might not have enough history to restart the run.${NC}"
             echo -e "${YELLOW}======================================================${NC}"
-            
+
             if [ "$DRY_RUN" = true ]; then
                 log_step "DRY RUN: Would delete $NUM_TO_DELETE tracers."
                 echo "Would delete from: $(echo "$FILES_TO_DELETE" | head -n 1 || true) to $(echo "$FILES_TO_DELETE" | tail -n 1)"
@@ -233,7 +236,7 @@ if [ "$DELETE_OLD_TRACERS" = true ]; then
                 echo -n -e "Are you sure you want to proceed with deletion? (y/N): " > /dev/tty
                 read confirm < /dev/tty
                 echo "User response: $confirm"
-                
+
                 if [[ $confirm == [yY] || $confirm == [yY][eE][sS] ]]; then
                     if [ -n "$FILES_TO_DELETE" ]; then
                         log_step "Deleting $NUM_TO_DELETE old tracers..."
